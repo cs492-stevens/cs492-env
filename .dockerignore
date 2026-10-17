@@ -2,3 +2,8 @@
 .gitignore
 *.qcow2
 *.raw
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist

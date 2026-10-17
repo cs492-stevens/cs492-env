@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs492-env"
+version = "0.1.0"
+description = "Cross-platform launcher for the CS492 development VM"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/cs492-stevens/cs492-env"
+
+[project.scripts]
+cs492-env = "cs492_env.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

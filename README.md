@@ -1,127 +1,86 @@
-# CS492 Kernel Module Development Environment
+# CS492 Development Environment
 
 This project packages a fixed AMD64 Debian Trixie VM inside a host-native Docker
-image.
-Users work in a normal Debian shell and can build, load, and unload external
-kernel modules without granting the outer container permission to modify the
-host kernel.
+image. Students work in a normal Debian shell and can develop external kernel
+modules and FUSE 3 filesystems without granting the outer container permission
+to modify the host kernel.
 
-The published OCI image is intended to have two variants:
+The published OCI image has native AMD64 and ARM64 container variants. Docker
+selects the host-native variant, while both variants run the same AMD64 guest:
 
-- An AMD64 container running the AMD64 guest with KVM when available.
-- An ARM64 container running the same AMD64 guest with QEMU TCG.
+- AMD64 Linux can use KVM when `/dev/kvm` is available.
+- Apple Silicon, macOS, and Windows use QEMU TCG emulation.
 
-Docker selects the host-native container variant. Do not force
-`--platform linux/amd64` on Apple Silicon; the ARM64 container contains a native
-ARM64 build of `qemu-system-x86_64`.
+## Student Prerequisites
 
-## Prerequisites
-
-- Docker Engine or Docker Desktop
-- [`just`](https://github.com/casey/just)
+- Python 3.10 or newer
+- Git
+- Docker Engine or Docker Desktop configured for Linux containers
 - Approximately 4 GB for the image and persistent VM state
 
-The launcher targets ordinary rootful Docker Engine and Docker Desktop. Rootless
-Docker and daemons configured with user-namespace remapping need additional UID
-mapping work and are not supported by this first pass. SELinux-enforcing hosts
-are detected and receive a private `:Z` label for the workspace bind mount.
+Windows users should use Docker Desktop's WSL 2 backend. Docker Desktop handles
+the Linux bind mount used to share the current Windows directory with the VM.
 
-Building the image also requires BuildKit support for an AMD64 build stage. This
-is automatic on AMD64 and in Docker Desktop. An ARM64 Linux build host may need
-binfmt/QEMU configured for Docker Buildx. Users of a published image do
-not need build emulation support.
+## Install The Launcher
 
-## Usage
+Install a tagged launcher release directly from this Git repository.
 
-After `IMAGE` and `TAG` have been configured for the image registry:
+macOS and Linux:
 
 ```sh
-just pull
-just run
+python3 -m pip install "cs492-env @ git+https://github.com/cs492-stevens/cs492-env.git@v0.1.0"
 ```
 
-The VM boots to an automatically logged-in `dev` shell. The repository is
-mounted at `/workspace`, and the guest's root filesystem persists in a Docker
-named volume. Shut the VM down cleanly with:
+Windows PowerShell:
+
+```powershell
+py -m pip install "cs492-env @ git+https://github.com/cs492-stevens/cs492-env.git@v0.1.0"
+```
+
+The installation provides the `cs492-env` command. Run it from the directory
+that should be mounted into the guest:
+
+```sh
+cd path/to/assignment
+cs492-env
+```
+
+The VM boots to an automatically logged-in `dev` shell. The launch directory is
+mounted at `/workspace`. Shut down cleanly from inside the guest with:
 
 ```sh
 sudo poweroff
 ```
 
-`just stop` can terminate a stuck VM, but an abrupt exit can require filesystem
-journal recovery on the next boot.
+## Launcher Commands
 
-To boot a disposable VM without changing persistent state:
+| Command | Purpose |
+| --- | --- |
+| `cs492-env` | Start the persistent VM |
+| `cs492-env clean` | Start a disposable VM without changing persistent state |
+| `cs492-env pull` | Pull the currently selected image |
+| `cs492-env status` | Display the release, image, volume, and local state |
+| `cs492-env stop` | Stop a stuck VM |
+| `cs492-env reset` | Delete the current release's persistent VM changes |
+| `cs492-env --version` | Display the installed launcher version |
 
-```sh
-just clean
-```
+`reset` asks for confirmation and does not modify files under `/workspace`.
 
-To discard all changes made inside the persistent VM:
+Common launcher options are:
 
-```sh
-just reset
-```
+| Option | Purpose |
+| --- | --- |
+| `--workspace PATH` | Mount another host directory instead of the current directory |
+| `--cpus NUMBER` | Override the guest virtual CPU count |
+| `--memory MIB` | Override guest memory |
+| `--accel auto\|kvm\|tcg` | Override QEMU acceleration selection |
+| `--offline` | Use cached release information without contacting the course website |
+| `--yes` | Skip reset confirmation |
 
-Resetting does not touch files under `/workspace`.
+The existing `VM_CPUS`, `VM_MEMORY`, and `VM_ACCEL` environment variables are
+also accepted.
 
-## Building And Testing A Module
-
-The guest contains the compiler, `kmod`, and headers matching its pinned kernel,
-along with the FUSE 3 runtime and development headers, `pkg-config`, `tmux`, full
-`vim`, `just`, `uv`, and a uv-managed Python 3.14.
-Kernel and header metapackages are held because QEMU boots the immutable kernel
-shipped with the container; users should not upgrade those packages.
-A minimal example is included:
-
-```sh
-cd /workspace/examples/hello
-make
-sudo insmod hello.ko
-sudo dmesg | tail
-sudo rmmod hello
-sudo dmesg | tail
-```
-
-The guest reports `x86_64` from `uname -m` on every host architecture.
-
-The managed Python is the default in interactive shells:
-
-```sh
-python --version
-python3 --version
-uv --version
-just --version
-```
-
-Debian's system Python remains untouched; Python projects should use `uv` for
-environments and dependencies.
-
-## Publishing
-
-Build an image for the current host architecture:
-
-```sh
-just build
-```
-
-Build and push a multi-architecture image through a configured Buildx builder:
-
-```sh
-IMAGE=registry.example.com/cs492-env TAG=2026.1 just publish
-```
-
-Users use the same values when pulling and running:
-
-```sh
-IMAGE=registry.example.com/cs492-env TAG=2026.1 just pull
-IMAGE=registry.example.com/cs492-env TAG=2026.1 just run
-```
-
-For a published release, place `IMAGE` and `TAG` in a shared shell environment or
-change their defaults in the `justfile`.
-
-## Persistence Model
+## Persistence
 
 The container contains an immutable base disk at:
 
@@ -129,82 +88,145 @@ The container contains an immutable base disk at:
 /opt/vm/debian-base.qcow2
 ```
 
-`just run` creates a small external overlay in the versioned Docker volume:
+For release `2026.1`, the launcher creates a Docker volume named:
 
 ```text
-/state/debian-overlay.qcow2
+cs492-env-2026.1
 ```
 
-The overlay records all guest filesystem changes, including installed packages,
-home-directory contents, and configuration. A SHA-256 identifier ties it to the
-exact base disk. The entrypoint refuses to boot an old overlay against a changed
-base image instead of risking filesystem corruption.
+The volume contains `/state/debian-overlay.qcow2`, which records package
+installations, home-directory contents, and other guest filesystem changes.
+The temporary outer container is removed after shutdown, but the named volume
+and overlay remain.
 
-Use a new `TAG` for each incompatible image. This naturally gives it a
-new default volume name. Source files should remain in `/workspace`, not only in
-the VM disk, so moving between releases is straightforward.
+Each release name selects a separate volume. When the course moves to a new
+image, the old overlay remains in Docker but is not attached to the new base
+disk. A SHA-256 identifier provides an additional check: the entrypoint refuses
+to boot an overlay created for a different base image.
 
-Release tags must be immutable. Rebuilding and replacing the image under the
-same tag can produce a different base-disk checksum and intentionally cause the
-old overlay to be rejected.
+Source files persist independently through the `/workspace` host bind mount.
 
-## Configuration
+## Development Tools
 
-The command runner accepts these environment variables:
+The guest includes:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `IMAGE` | `cs492-env` | OCI image repository |
-| `TAG` | `dev` | Image tag and persistent-volume suffix |
-| `STATE_VOLUME` | `cs492-env-$TAG` | Docker volume name |
-| `VM_CPUS` | `2` | Guest virtual CPU count |
-| `VM_MEMORY` | `2048` | Guest RAM in MiB |
-| `VM_ACCEL` | `auto` | `auto`, `kvm`, or `tcg` |
-| `VM_MODE` | `persistent` | `persistent` or `ephemeral` guest disk |
-| `DEBIAN_RELEASE` | `trixie` | Debian guest and container release |
-| `DEBIAN_SNAPSHOT` | `20261001T000000Z` | Debian snapshot used at build time |
+- The compiler, `make`, `kmod`, and headers matching the pinned guest kernel
+- The FUSE 3 runtime, development headers, and `pkg-config`
+- `gdb`, `strace`, Git, `tmux`, full `vim`, `nano`, and `just`
+- uv and a uv-managed Python 3.14 installation
 
-`auto` uses KVM only when the container is running on AMD64 Linux with
-`/dev/kvm` exposed. Docker Desktop and ARM64 hosts use multithreaded TCG.
+Kernel and header metapackages are held because QEMU directly boots the
+immutable kernel shipped in the container. Students should not upgrade those
+packages.
 
-The launcher passes the invoking user's numeric UID and GID into the guest and
-runs QEMU under that identity. Guest root therefore cannot use the 9p workspace
-share to create host-root-owned files. The QEMU command monitor is disabled.
+A minimal external kernel module is included under `examples/hello`:
+
+```sh
+cd /workspace/examples/hello
+make
+sudo insmod hello.ko
+sudo dmesg | tail
+sudo rmmod hello
+```
+
+The guest reports `x86_64` from `uname -m` on every host architecture.
+
+## Release Selection
+
+The launcher obtains the active release from:
+
+```text
+https://cs492-stevens.github.io/cs492-env/stable.json
+```
+
+The last valid manifest is cached in the platform's user cache directory. A
+website outage therefore continues using the same release instead of silently
+returning to an older image. If neither the website nor a cache is available,
+the launcher uses the release metadata bundled with its installed version.
+
+The launcher validates the manifest against an exact schema and constructs the image reference from a
+trusted Docker Hub repository compiled into the package. The website cannot
+redirect the launcher to another image repository. Images are run by their
+immutable multi-architecture index digest.
+
+The expected document is:
+
+```json
+{
+  "schema_version": 1,
+  "release": "2026.1",
+  "image_tag": "2026.1",
+  "image_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "minimum_cli_version": "0.1.0",
+  "recommended_cli_version": "0.1.0",
+  "notice": null
+}
+```
+
+The Docker Hub repository is provisionally `cs492-stevens/cs492-env`; update
+`IMAGE_REPOSITORY` in `src/cs492_env/cli.py` before the first published release
+if the final repository name differs. Also replace the unpublished bundled
+fallback digest before tagging the first launcher release.
+
+## Maintainer Workflow
+
+Maintainers need [`just`](https://github.com/casey/just) in addition to the
+student prerequisites.
+
+Build and run a local image:
+
+```sh
+just build
+just run
+```
+
+The justfile invokes the Python launcher from `src/` with an offline local-image
+override, so local development does not depend on the course website.
+
+Build and publish the native AMD64 and ARM64 outer images containing the same
+AMD64 guest:
+
+```sh
+IMAGE=cs492-stevens/cs492-env TAG=2026.1 just publish
+```
+
+For each release:
+
+1. Build and push a new immutable image tag.
+2. Obtain the pushed multi-architecture index digest.
+3. Choose a new release name whenever the digest changes.
+4. Publish the updated manifest as `/cs492-env/stable.json` on the course site.
+5. Raise `minimum_cli_version` only when the current launcher cannot run it.
+6. Tag launcher releases as `vMAJOR.MINOR.PATCH` for the generated pip command.
+
+`release/stable.example.json` is a publishable manifest template; its placeholder
+digest must be replaced.
 
 ## Image Construction
 
-The multi-stage `Dockerfile` performs two separate jobs:
+The multi-stage `Dockerfile` performs two jobs:
 
-1. An AMD64 build stage installs uv and Python 3.14, then runs
-   `scripts/build-guest.py`. That script uses `mmdebstrap` and a dated Debian
-   snapshot to create the guest root filesystem, installs a Debian kernel,
-   matching headers and development tools, and converts the result to a
-   compressed QCOW2 image.
-2. A host-native runtime stage installs `qemu-system-x86_64` and copies in the
-   same AMD64 guest artifacts.
+1. A fixed-AMD64 builder installs uv and Python 3.14, then runs
+   `scripts/build-guest.py`.
+2. A host-native runtime installs `qemu-system-x86_64` and copies in the AMD64
+   guest artifacts.
 
-`mmdebstrap` is a Debian root-filesystem bootstrapper. It resolves packages from
-APT repositories and installs them into an arbitrary directory without running
-the normal graphical or text Debian installer. Here that directory is
-`/build/rootfs` inside the temporary Docker builder container. Once configured,
-the directory is copied into an ext4 filesystem image with `mkfs.ext4`; QEMU
-later treats that image as the guest's root disk.
+`mmdebstrap` resolves Debian packages into `/build/rootfs` inside the temporary
+builder container. It does not boot a VM or run the Debian installer. The Python
+builder configures that root filesystem, writes it into an ext4 image, and
+converts the image to compressed QCOW2.
 
-`build-guest.py` therefore does run inside a Docker build container, specifically
-the fixed-AMD64 `guest-builder` stage. Python 3.14 and the image-building tools
-exist only in that temporary stage. The final outer runtime image does not carry
-Python or `mmdebstrap`; the Debian VM itself receives a separate uv-managed
-Python 3.14 installation.
+The VM kernel is booted directly by QEMU, so the disk needs neither a partition
+table nor a bootloader. Debian systemd runs as PID 1 inside the guest.
 
-The VM kernel is booted directly by QEMU, so the disk does not need a partition
-table or bootloader. Debian's systemd still runs as PID 1 inside the guest.
+The APT configuration in `config/apt/99broken-proxy` disables cache use and
+pipelining and enables the `BrokenProxy` compatibility setting. It is used by
+both Docker stages, `mmdebstrap`, and the guest.
 
-The Debian snapshot pins packages, but a production release should additionally
-pin the digest of the `debian:trixie-slim` parent image in `Dockerfile` and
-retain the resulting OCI image by digest.
+## Limitations
 
-The APT configuration in `config/apt/99broken-proxy` disables HTTP and HTTPS
-cache use and pipelining, and includes the `BrokenProxy` compatibility setting.
-It is used by both Docker build stages, `mmdebstrap`, and the resulting guest.
-This avoids stale package responses commonly encountered behind Docker Desktop
-or intercepting proxies, including on macOS.
+Rootless Docker and daemons configured with user-namespace remapping are not
+currently supported. Full Windows and macOS launch validation requires testing
+against Docker Desktop on those platforms. On SELinux-enforcing Linux hosts,
+the launcher refuses to mount broad system or home roots because Docker's `:Z`
+option would recursively relabel them; select a project subdirectory instead.

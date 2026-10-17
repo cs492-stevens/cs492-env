@@ -7,8 +7,8 @@ readonly state_dir=/state
 readonly persistent_disk="${state_dir}/debian-overlay.qcow2"
 readonly persistent_id="${state_dir}/base-id"
 
-# These IDs are passed by run.sh. QEMU later drops to them so guest root can
-# modify the shared workspace only with the invoking host user's authority.
+# These IDs are passed by the host launcher. QEMU later drops to them so guest
+# root can modify the workspace only with the invoking host user's authority.
 run_uid=${HOST_UID:-1000}
 run_gid=${HOST_GID:-1000}
 if [[ ! "${run_uid}" =~ ^[1-9][0-9]*$ || ! "${run_gid}" =~ ^[1-9][0-9]*$ ]]; then

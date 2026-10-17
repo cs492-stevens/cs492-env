@@ -60,15 +60,15 @@ Platform Handling
 - Run Docker with inherited standard input/output for the interactive serial console.
 Installation
 From a tagged Git release:
-python3 -m pip install "cs492-env @ git+https://github.com/rchtsang/cs492-env.git@v0.1.0"
+python3 -m pip install "cs492-env @ git+https://github.com/cs492-stevens/cs492-env.git@v0.1.0"
 Windows:
-py -m pip install "cs492-env @ git+https://github.com/rchtsang/cs492-env.git@v0.1.0"
+py -m pip install "cs492-env @ git+https://github.com/cs492-stevens/cs492-env.git@v0.1.0"
 Students can then run cs492-env from any project directory.
 Repository Integration
 - Make the Python module the single launcher implementation.
 - Add src/cs492_env/__main__.py for local module execution.
 - Update the justfile to invoke it with local image and offline overrides.
-- Remove scripts/run.sh after feature parity is established.
+- Remove the shell launcher after feature parity is established. (Completed.)
 - Keep scripts/entrypoint.sh as the in-container QEMU launcher.
 - Update documentation for maintainer and student workflows.
 Verification

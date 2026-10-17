@@ -44,6 +44,7 @@ GUEST_PACKAGES = (
     "strace",
     "tmux",
     "vim",
+    "valgrind",
     "iproute2",
     "iputils-ping",
     "procps",
