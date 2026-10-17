@@ -1,0 +1,83 @@
+Proposed Design
+1. Add a standard-library-only Python package under src/cs492_env/.
+2. Configure pyproject.toml with the console entry point:
+[project.scripts]
+cs492-env = "cs492_env.cli:main"
+3. Support Python 3.10 or newer.
+4. Invoke Docker through subprocess with argument lists, never shell=True.
+5. Make cs492-env with no arguments start the persistent VM.
+CLI Commands
+cs492-env                 Start the persistent VM
+cs492-env clean           Start an ephemeral VM
+cs492-env pull            Pull the current image
+cs492-env status          Show image, volume, and release
+cs492-env stop            Stop a stuck VM
+cs492-env reset           Delete the current release's overlay
+cs492-env --version       Show CLI version
+reset should require confirmation unless --yes is supplied.
+Persistence
+Each release gets a named Docker volume:
+cs492-env-2026-1
+The guest overlay remains at /state/debian-overlay.qcow2. Removing the temporary container does not remove this volume.
+When the stable release changes:
+- A new volume is selected automatically.
+- The previous release’s overlay remains available.
+- /workspace continues pointing to the host directory.
+- An image digest change must always receive a new release identifier.
+Release Manifest
+Publish this stable URL:
+https://cs492-stevens.github.io/cs492-env/stable.json
+Suggested schema:
+{
+  "schema_version": 1,
+  "release": "2026.1",
+  "image_tag": "2026.1",
+  "image_digest": "sha256:...",
+  "minimum_cli_version": "0.1.0",
+  "recommended_cli_version": "0.1.0",
+  "notice": null
+}
+The digest should be the Docker Hub multi-architecture index digest.
+The Docker Hub repository name will remain a code constant to be decided later. It should not come from the remote manifest, preventing the website from redirecting the launcher to an arbitrary repository.
+Manifest Behavior
+- Fetch using urllib.request with a short timeout.
+- Validate the schema, release name, versions, and SHA-256 digest strictly.
+- Cache the last valid response in the platform’s user cache directory.
+- Use the cache if the website is unavailable.
+- Use an embedded release only when no cache exists.
+- Never fall back from a cached newer release to an older embedded release.
+- Print the manifest’s optional course notice.
+- Refuse incompatible releases when the CLI is below minimum_cli_version.
+- Recommend the Git installation command when a newer CLI is available.
+- Never update the CLI automatically.
+Platform Handling
+- Linux/macOS: pass os.getuid() and os.getgid().
+- Windows: use the guest’s fixed unprivileged identity and Docker Desktop file sharing.
+- Linux AMD64: add /dev/kvm and its group automatically when available.
+- SELinux Linux: apply the :Z workspace label when enforcing.
+- Windows/macOS: rely on Docker Desktop and TCG acceleration.
+- Verify Docker is running and configured for Linux containers.
+- Run Docker with inherited standard input/output for the interactive serial console.
+Installation
+From a tagged Git release:
+python3 -m pip install "cs492-env @ git+https://github.com/rchtsang/cs492-env.git@v0.1.0"
+Windows:
+py -m pip install "cs492-env @ git+https://github.com/rchtsang/cs492-env.git@v0.1.0"
+Students can then run cs492-env from any project directory.
+Repository Integration
+- Make the Python module the single launcher implementation.
+- Add src/cs492_env/__main__.py for local module execution.
+- Update the justfile to invoke it with local image and offline overrides.
+- Remove scripts/run.sh after feature parity is established.
+- Keep scripts/entrypoint.sh as the in-container QEMU launcher.
+- Update documentation for maintainer and student workflows.
+Verification
+Add standard-library unittest coverage for:
+- Manifest validation, caching, and offline fallback.
+- Version compatibility.
+- Docker arguments on Linux, macOS, and Windows.
+- KVM and SELinux handling.
+- Persistent and ephemeral volume behavior.
+- Reset confirmation and running-container protection.
+- Paths containing spaces.
+- Docker Desktop workspace writes from the Windows guest.
