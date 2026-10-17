@@ -1,0 +1,5 @@
+Acquire::http::No-Cache "true";
+Acquire::https::No-Cache "true";
+Acquire::http::Pipeline-Depth "0";
+Acquire::https::Pipeline-Depth "0";
+Acquire::BrokenProxy "true";

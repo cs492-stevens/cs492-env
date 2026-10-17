@@ -1,0 +1,4 @@
+.git
+.gitignore
+*.qcow2
+*.raw
