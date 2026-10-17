@@ -190,13 +190,28 @@ AMD64 guest:
 IMAGE=cs492-stevens/cs492-env TAG=2026.1 just publish
 ```
 
+After the multi-architecture push succeeds, the publish recipe reads BuildKit's
+reported index digest and creates:
+
+```text
+release/stable.2026.1.json
+```
+
+Upload that file to the course website as:
+
+```text
+https://cs492-stevens.github.io/cs492-env/stable.json
+```
+
+No versioned manifest is written when the image build or push fails.
+
 For each release:
 
 1. Build and push a new immutable image tag.
-2. Obtain the pushed multi-architecture index digest.
-3. Choose a new release name whenever the digest changes.
-4. Publish the updated manifest as `/cs492-env/stable.json` on the course site.
-5. Raise `minimum_cli_version` only when the current launcher cannot run it.
+2. Choose a new release name whenever the image contents change.
+3. Run `just publish` to produce `release/stable.$TAG.json` from BuildKit metadata.
+4. Upload that generated file as `/cs492-env/stable.json` on the course site.
+5. Adjust the generated CLI compatibility fields if the release policy requires it.
 6. Tag launcher releases as `vMAJOR.MINOR.PATCH` for the generated pip command.
 
 `release/stable.example.json` is a publishable manifest template; its placeholder

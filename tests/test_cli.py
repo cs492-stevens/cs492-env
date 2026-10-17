@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from cs492_env import cli
+from cs492_env import release_manifest
 
 
 DIGEST = "sha256:" + "a" * 64
@@ -186,6 +187,36 @@ class ManifestTests(unittest.TestCase):
 
         with self.assertRaisesRegex(cli.CliError, "requires launcher"):
             cli.check_cli_compatibility(release)
+
+
+class ReleaseManifestTests(unittest.TestCase):
+    def test_buildkit_digest_generates_versioned_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            metadata = root / "metadata.json"
+            output = root / "release" / "stable.2026.1.json"
+            metadata.write_text(
+                json.dumps({"containerimage.digest": DIGEST}),
+                encoding="utf-8",
+            )
+
+            release_manifest.write_manifest(metadata, "2026.1", output)
+
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            validated = cli.release_from_document(generated)
+            self.assertEqual(validated.name, "2026.1")
+            self.assertEqual(validated.image_tag, "2026.1")
+            self.assertEqual(validated.image_digest, DIGEST)
+            self.assertEqual(validated.minimum_cli_version, cli.__version__)
+            self.assertEqual(validated.recommended_cli_version, cli.__version__)
+
+    def test_missing_buildkit_digest_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "valid image digest"):
+            release_manifest.image_digest({})
+
+    def test_invalid_release_name_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "release has an invalid format"):
+            release_manifest.manifest_document("../bad", DIGEST)
 
 
 class ArgumentTests(unittest.TestCase):

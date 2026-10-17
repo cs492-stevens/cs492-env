@@ -22,14 +22,23 @@ build:
 
 # Publish native AMD64 and ARM64 runtime images containing the same AMD64 guest.
 publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    metadata=$(mktemp)
+    trap 'rm -f "${metadata}"' EXIT
     docker buildx build \
       --platform linux/amd64,linux/arm64 \
       --build-arg "DEBIAN_RELEASE={{release}}" \
       --build-arg "DEBIAN_SNAPSHOT={{snapshot}}" \
       --build-arg "IMAGE_VERSION={{tag}}" \
       --tag "{{image_ref}}" \
+      --metadata-file "${metadata}" \
       --push \
       .
+    PYTHONPATH=src "{{python}}" -m cs492_env.release_manifest \
+      --metadata "${metadata}" \
+      --release "{{tag}}" \
+      --output "release/stable.{{tag}}.json"
 
 # Pull the configured prebuilt image.
 pull:
