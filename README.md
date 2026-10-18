@@ -219,24 +219,28 @@ digest must be replaced.
 
 ## Image Construction
 
-The multi-stage `Dockerfile` performs two jobs:
+The multi-stage `Dockerfile` separates guest construction into three phases:
 
-1. A fixed-AMD64 builder installs uv and Python 3.14, then runs
-   `scripts/build-guest.py`.
-2. A host-native runtime installs `qemu-system-x86_64` and copies in the AMD64
-   guest artifacts.
+1. A fixed-AMD64 bootstrap stage uses `mmdebstrap` in extraction-only mode to
+   resolve and unpack the snapshot-pinned package closure.
+2. A fixed-AMD64 scratch stage makes that extracted filesystem its own root,
+   configures the packages and guest, and generates the initramfs.
+3. A build-host-native stage copies the configured rootfs, writes it into an
+   ext4 image, and converts the image to compressed QCOW2.
 
-`mmdebstrap` resolves Debian packages into `/build/rootfs` inside the temporary
-builder container. It does not boot a VM or run the Debian installer. The Python
-builder configures that root filesystem, writes it into an ext4 image, and
-converts the image to compressed QCOW2.
+The final host-native runtime installs `qemu-system-x86_64` and copies in those
+AMD64 guest artifacts. No construction phase requires a successful nested mount
+or enters a nested chroot. This is important on Apple Silicon: Docker supplies
+`/proc` at the scratch-stage root, allowing Rosetta to execute AMD64 package
+scripts without `CAP_SYS_ADMIN`. `mmdebstrap` does not boot a VM or run the
+Debian installer.
 
 The VM kernel is booted directly by QEMU, so the disk needs neither a partition
 table nor a bootloader. Debian systemd runs as PID 1 inside the guest.
 
 The APT configuration in `config/apt/99broken-proxy` disables cache use and
 pipelining and enables the `BrokenProxy` compatibility setting. It is used by
-both Docker stages, `mmdebstrap`, and the guest.
+the Docker stages, `mmdebstrap`, and the guest.
 
 ## Limitations
 

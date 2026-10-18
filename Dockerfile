@@ -4,8 +4,88 @@ ARG DEBIAN_RELEASE=trixie
 ARG DEBIAN_SNAPSHOT=20261001T000000Z
 ARG PYTHON_VERSION=3.14
 
-# The guest is always AMD64, regardless of the runtime container architecture.
-FROM --platform=linux/amd64 debian:${DEBIAN_RELEASE}-slim AS guest-builder
+# Download and extract the fixed AMD64 package set without entering the target
+# rootfs. Avoiding a nested chroot keeps this stage compatible with Rosetta.
+FROM --platform=linux/amd64 debian:${DEBIAN_RELEASE}-slim AS guest-bootstrap
+
+ARG DEBIAN_RELEASE
+ARG DEBIAN_SNAPSHOT
+ARG PYTHON_VERSION
+
+COPY config/apt/99broken-proxy /etc/apt/apt.conf.d/99broken-proxy
+
+RUN rm -f /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s/ %s main\n' \
+        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" > /etc/apt/sources.list \
+    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
+        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        mmdebstrap \
+    && rm -rf /var/lib/apt/lists/*
+
+# The current uv release provisions Python 3.14 for the bootstrap script and
+# supplies the AMD64 uv binary copied into the guest.
+ENV PATH="/root/.local/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
+        https://astral.sh/uv/install.sh \
+        --output /tmp/install-uv.sh \
+    && env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh \
+    && rm /tmp/install-uv.sh \
+    && uv python install "${PYTHON_VERSION}" --default \
+    && python3.14 --version
+
+COPY scripts/build-guest.py /usr/local/bin/build-guest
+RUN python3.14 /usr/local/bin/build-guest \
+        bootstrap \
+        "${DEBIAN_RELEASE}" \
+        "${DEBIAN_SNAPSHOT}" \
+        unused \
+        "${PYTHON_VERSION}"
+
+# Configure packages while the extracted guest is the stage root. Docker makes
+# /proc available here, so AMD64 binaries run under Rosetta without requiring
+# CAP_SYS_ADMIN or a nested chroot.
+FROM --platform=linux/amd64 scratch AS guest-rootfs
+
+ARG DEBIAN_RELEASE
+ARG DEBIAN_SNAPSHOT
+ARG PYTHON_VERSION
+
+ENV HOME=/root \
+    PATH="/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+COPY --from=guest-bootstrap /build/rootfs/ /
+COPY scripts/build-guest.py /usr/local/bin/build-guest
+COPY guest/ /guest/
+
+# mmdebstrap extracted every package and retained its snapshot metadata and
+# archives. Register all payloads, then let apt order package configuration.
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
+    && chmod 0755 /usr/sbin/policy-rc.d \
+    && dpkg --unpack --force-depends /var/cache/apt/archives/*.deb \
+    && apt-get --yes --no-download --fix-broken install \
+    && dpkg --configure --pending \
+    && test -z "$(dpkg --audit)" \
+    && rm /usr/sbin/policy-rc.d \
+    && rm -f /var/cache/apt/archives/*.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0700 -o _apt -g root /var/lib/apt/lists/partial
+
+RUN uv python install "${PYTHON_VERSION}" --default \
+    && python3.14 /usr/local/bin/build-guest \
+        configure \
+        "${DEBIAN_RELEASE}" \
+        "${DEBIAN_SNAPSHOT}" \
+        unused \
+        "${PYTHON_VERSION}" \
+    && rm -rf /root/.cache /root/.local /guest /usr/local/bin/build-guest
+
+# Disk creation does not execute guest binaries, so it can run natively on the
+# build host while packaging the fixed AMD64 root filesystem.
+FROM --platform=$BUILDPLATFORM debian:${DEBIAN_RELEASE}-slim AS guest-builder
 
 ARG DEBIAN_RELEASE
 ARG DEBIAN_SNAPSHOT
@@ -24,12 +104,9 @@ RUN rm -f /etc/apt/sources.list.d/* \
         ca-certificates \
         curl \
         e2fsprogs \
-        mmdebstrap \
         qemu-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# The current uv release provisions Python 3.14 for the image-construction
-# script. This builder stage is discarded after the guest artifacts are made.
 ENV PATH="/root/.local/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
         https://astral.sh/uv/install.sh \
@@ -39,11 +116,12 @@ RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
     && uv python install "${PYTHON_VERSION}" --default \
     && python3.14 --version
 
+COPY --from=guest-rootfs / /build/rootfs/
 COPY scripts/build-guest.py /usr/local/bin/build-guest
-COPY guest/ /guest/
 COPY config/ /config/
 
 RUN python3.14 /usr/local/bin/build-guest \
+        package \
         "${DEBIAN_RELEASE}" \
         "${DEBIAN_SNAPSHOT}" \
         "${GUEST_DISK_SIZE}" \
