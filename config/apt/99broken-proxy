@@ -3,3 +3,4 @@ Acquire::https::No-Cache "true";
 Acquire::http::Pipeline-Depth "0";
 Acquire::https::Pipeline-Depth "0";
 Acquire::BrokenProxy "true";
+Acquire::Retries "5";

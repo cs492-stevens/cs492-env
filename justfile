@@ -1,6 +1,6 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-image := env_var_or_default("IMAGE", "cs492-env")
+image := env_var_or_default("IMAGE", "rtsang1/cs492-env")
 tag := env_var_or_default("TAG", "dev")
 image_ref := image + ":" + tag
 snapshot := env_var_or_default("DEBIAN_SNAPSHOT", "20261001T000000Z")

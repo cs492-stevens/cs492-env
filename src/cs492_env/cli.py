@@ -27,7 +27,7 @@ MANIFEST_URL = "https://cs492-stevens.github.io/cs492-env/stable.json"
 # This is intentionally not configurable by the website manifest. Keeping the
 # repository in trusted local code prevents a compromised page from selecting
 # an arbitrary image that receives write access to the student's workspace.
-IMAGE_REPOSITORY = "cs492-stevens/cs492-env"
+IMAGE_REPOSITORY = "rtsang1/cs492-env"
 
 CONTAINER_NAME = "cs492-env"
 CACHE_FILE_NAME = "stable.json"

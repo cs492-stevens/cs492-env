@@ -17,6 +17,7 @@ BUILD_ROOTFS = Path("/build/rootfs")
 RAW_DISK = Path("/build/debian.raw")
 ARTIFACTS = Path("/artifacts")
 OUTPUT = ARTIFACTS / "debian-base.qcow2"
+PYTHON_ASSETS = Path("/python-assets")
 ENVIRONMENT_NAME = "cs492-env"
 
 GUEST_PACKAGES = (
@@ -43,6 +44,7 @@ GUEST_PACKAGES = (
     "libfuse3-dev",
     "nano",
     "pkg-config",
+    "python3",
     "strace",
     "tmux",
     "vim",
@@ -69,12 +71,12 @@ class BuildConfig:
 
     @property
     def mirror(self) -> str:
-        return f"http://snapshot.debian.org/archive/debian/{self.snapshot}/"
+        return f"https://snapshot.debian.org/archive/debian/{self.snapshot}/"
 
     @property
     def security_mirror(self) -> str:
         return (
-            "http://snapshot.debian.org/archive/debian-security/"
+            "https://snapshot.debian.org/archive/debian-security/"
             f"{self.snapshot}/"
         )
 
@@ -126,7 +128,7 @@ def bootstrap_rootfs(config: BuildConfig) -> None:
     """Download and extract the pinned Debian package closure."""
     # The extract variant never enters the target. Package configuration happens
     # in the next Docker stage, where /proc is available at the stage root even
-    # under Docker Desktop's Rosetta emulation.
+    # under Docker Desktop's architecture emulation.
     run(
         "mmdebstrap",
         "--mode=root",
@@ -197,30 +199,55 @@ def create_dev_account(config: BuildConfig) -> None:
 
 
 def install_guest_python(config: BuildConfig) -> None:
-    """Install the managed Python toolchain as the normal guest user."""
-    guest_environment = (
-        "env",
-        "HOME=/home/dev",
-        "PATH=/usr/local/bin:/usr/bin:/bin",
+    """Install the host-downloaded AMD64 Python tree for the guest user."""
+    version_parts = config.python_version.split(".")
+    if len(version_parts) < 2 or not all(part.isdigit() for part in version_parts):
+        raise RuntimeError(f"invalid Python version: {config.python_version}")
+    minor_version = ".".join(version_parts[:2])
+    installation_name = f"cpython-{minor_version}-linux-x86_64-gnu"
+
+    home_directory = config.rootfs / "home/dev"
+    local_directory = home_directory / ".local"
+    install_directory = local_directory / "share/uv/python"
+    install_directory.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(PYTHON_ASSETS, install_directory)
+
+    # uv records this alias as an absolute link to its download directory.
+    # Replace it after relocation so it resolves inside the guest home.
+    full_installations = sorted(
+        path
+        for path in install_directory.iterdir()
+        if path.name.startswith(f"cpython-{minor_version}.")
+        and path.name.endswith("-linux-x86_64-gnu")
+        and path.is_dir()
     )
-    run_guest(
-        config,
-        *guest_environment,
-        "uv",
-        "python",
-        "install",
-        config.python_version,
-        "--default",
-        user="dev",
+    if len(full_installations) != 1:
+        raise RuntimeError(
+            f"expected one managed Python {minor_version} installation, "
+            f"found {len(full_installations)}"
+        )
+    installation = install_directory / installation_name
+    installation.unlink(missing_ok=True)
+    installation.symlink_to(full_installations[0].name)
+
+    interpreter = install_directory / installation_name / "bin" / f"python{minor_version}"
+    if not interpreter.is_file():
+        raise RuntimeError(f"managed Python executable not found: {interpreter}")
+
+    bin_directory = local_directory / "bin"
+    bin_directory.mkdir()
+    relative_interpreter = (
+        Path("../share/uv/python")
+        / installation_name
+        / "bin"
+        / f"python{minor_version}"
     )
-    run_guest(
-        config,
-        *guest_environment,
-        "uv",
-        "cache",
-        "clean",
-        user="dev",
-    )
+    for executable in ("python", "python3", f"python{minor_version}"):
+        (bin_directory / executable).symlink_to(relative_interpreter)
+
+    account = home_directory.stat()
+    for path in (local_directory, *local_directory.rglob("*")):
+        os.lchown(path, account.st_uid, account.st_gid)
 
 
 def configure_interactive_login(config: BuildConfig) -> None:

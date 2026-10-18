@@ -67,6 +67,15 @@ class FakeResponse:
 
 
 class ManifestTests(unittest.TestCase):
+    def test_trusted_image_repository_matches_publish_default(self) -> None:
+        justfile = (Path(__file__).parents[1] / "justfile").read_text()
+
+        self.assertEqual(cli.IMAGE_REPOSITORY, "rtsang1/cs492-env")
+        self.assertIn(
+            'image := env_var_or_default("IMAGE", "rtsang1/cs492-env")',
+            justfile,
+        )
+
     def test_valid_manifest_selects_digest_and_versioned_volume(self) -> None:
         release = cli.decode_manifest(payload())
 

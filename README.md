@@ -163,10 +163,8 @@ The expected document is:
 }
 ```
 
-The Docker Hub repository is provisionally `cs492-stevens/cs492-env`; update
-`IMAGE_REPOSITORY` in `src/cs492_env/cli.py` before the first published release
-if the final repository name differs. Also replace the unpublished bundled
-fallback digest before tagging the first launcher release.
+The trusted Docker Hub repository is `rtsang1/cs492-env`. Also replace the
+unpublished bundled fallback digest before tagging the first launcher release.
 
 ## Maintainer Workflow
 
@@ -187,7 +185,7 @@ Build and publish the native AMD64 and ARM64 outer images containing the same
 AMD64 guest:
 
 ```sh
-IMAGE=cs492-stevens/cs492-env TAG=2026.1 just publish
+IMAGE=rtsang1/cs492-env TAG=2026.1 just publish
 ```
 
 After the multi-architecture push succeeds, the publish recipe reads BuildKit's
@@ -219,21 +217,24 @@ digest must be replaced.
 
 ## Image Construction
 
-The multi-stage `Dockerfile` separates guest construction into three phases:
+The multi-stage `Dockerfile` separates guest construction into four stages:
 
 1. A fixed-AMD64 bootstrap stage uses `mmdebstrap` in extraction-only mode to
    resolve and unpack the snapshot-pinned package closure.
-2. A fixed-AMD64 scratch stage makes that extracted filesystem its own root,
+2. A build-host-native tools stage runs uv to download both its native Python
+   3.14 and an AMD64 managed Python installation without executing the latter.
+3. A fixed-AMD64 scratch stage makes the extracted filesystem its own root,
    configures the packages and guest, and generates the initramfs.
-3. A build-host-native stage copies the configured rootfs, writes it into an
+4. A build-host-native stage copies the configured rootfs, writes it into an
    ext4 image, and converts the image to compressed QCOW2.
 
 The final host-native runtime installs `qemu-system-x86_64` and copies in those
 AMD64 guest artifacts. No construction phase requires a successful nested mount
 or enters a nested chroot. This is important on Apple Silicon: Docker supplies
-`/proc` at the scratch-stage root, allowing Rosetta to execute AMD64 package
-scripts without `CAP_SYS_ADMIN`. `mmdebstrap` does not boot a VM or run the
-Debian installer.
+`/proc` at the scratch-stage root, allowing its architecture emulator to execute
+Debian's AMD64 package scripts without `CAP_SYS_ADMIN`. uv itself runs only as a
+native build-host binary. `mmdebstrap` does not boot a VM or run the Debian
+installer.
 
 The VM kernel is booted directly by QEMU, so the disk needs neither a partition
 table nor a bootloader. Debian systemd runs as PID 1 inside the guest.

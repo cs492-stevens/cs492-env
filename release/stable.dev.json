@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "release": "dev",
+  "image_tag": "dev",
+  "image_digest": "sha256:76d3779507f8da860c365124b29f79f9b491519d713552c5b25e7b1933745d21",
+  "minimum_cli_version": "0.1.0",
+  "recommended_cli_version": "0.1.0",
+  "notice": null
+}

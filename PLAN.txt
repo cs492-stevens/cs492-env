@@ -38,7 +38,7 @@ Suggested schema:
   "notice": null
 }
 The digest should be the Docker Hub multi-architecture index digest.
-The Docker Hub repository name will remain a code constant to be decided later. It should not come from the remote manifest, preventing the website from redirecting the launcher to an arbitrary repository.
+The Docker Hub repository is the trusted code constant `rtsang1/cs492-env`. It does not come from the remote manifest, preventing the website from redirecting the launcher to an arbitrary repository.
 Manifest Behavior
 - Fetch using urllib.request with a short timeout.
 - Validate the schema, release name, versions, and SHA-256 digest strictly.

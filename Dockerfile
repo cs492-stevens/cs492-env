@@ -5,7 +5,7 @@ ARG DEBIAN_SNAPSHOT=20261001T000000Z
 ARG PYTHON_VERSION=3.14
 
 # Download and extract the fixed AMD64 package set without entering the target
-# rootfs. Avoiding a nested chroot keeps this stage compatible with Rosetta.
+# rootfs. Avoiding a nested chroot keeps this stage compatible with emulation.
 FROM --platform=linux/amd64 debian:${DEBIAN_RELEASE}-slim AS guest-bootstrap
 
 ARG DEBIAN_RELEASE
@@ -14,40 +14,82 @@ ARG PYTHON_VERSION
 
 COPY config/apt/99broken-proxy /etc/apt/apt.conf.d/99broken-proxy
 
-RUN rm -f /etc/apt/sources.list.d/* \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s/ %s main\n' \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s/ %s main\n' \
         "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" > /etc/apt/sources.list \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
         "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates \
         curl \
         mmdebstrap \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# The current uv release provisions Python 3.14 for the bootstrap script and
-# supplies the AMD64 uv binary copied into the guest.
-ENV PATH="/root/.local/bin:${PATH}"
+# The installer can place the AMD64 executables without launching them. Running
+# uv itself here is unreliable under BuildKit's QEMU user-mode emulation.
 RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
         https://astral.sh/uv/install.sh \
         --output /tmp/install-uv.sh \
     && env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh \
     && rm /tmp/install-uv.sh \
-    && uv python install "${PYTHON_VERSION}" --default \
-    && python3.14 --version
+    && test -x /usr/local/bin/uv \
+    && test -x /usr/local/bin/uvx
 
 COPY scripts/build-guest.py /usr/local/bin/build-guest
-RUN python3.14 /usr/local/bin/build-guest \
+RUN python3 /usr/local/bin/build-guest \
         bootstrap \
         "${DEBIAN_RELEASE}" \
         "${DEBIAN_SNAPSHOT}" \
         unused \
         "${PYTHON_VERSION}"
 
+# Run uv only on the build host architecture. It can download an AMD64 managed
+# Python without executing that interpreter; the configured guest receives the
+# resulting installation tree below.
+FROM --platform=$BUILDPLATFORM debian:${DEBIAN_RELEASE}-slim AS native-tools
+
+ARG DEBIAN_RELEASE
+ARG DEBIAN_SNAPSHOT
+ARG PYTHON_VERSION
+
+COPY config/apt/99broken-proxy /etc/apt/apt.conf.d/99broken-proxy
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s/ %s main\n' \
+        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" > /etc/apt/sources.list \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
+        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        curl \
+        e2fsprogs \
+        qemu-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/root/.local/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
+        https://astral.sh/uv/install.sh \
+        --output /tmp/install-uv.sh \
+    && env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh \
+    && rm /tmp/install-uv.sh \
+    && uv python install \
+        "cpython-${PYTHON_VERSION}-linux-x86_64-gnu" \
+        --install-dir /python-assets \
+        --no-bin \
+    && uv python install "${PYTHON_VERSION}" --default \
+    && python3.14 --version \
+    && uv cache clean
+
 # Configure packages while the extracted guest is the stage root. Docker makes
-# /proc available here, so AMD64 binaries run under Rosetta without requiring
-# CAP_SYS_ADMIN or a nested chroot.
+# /proc available here, so AMD64 package tools run under emulation without
+# requiring CAP_SYS_ADMIN or a nested chroot.
 FROM --platform=linux/amd64 scratch AS guest-rootfs
 
 ARG DEBIAN_RELEASE
@@ -58,6 +100,7 @@ ENV HOME=/root \
     PATH="/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 COPY --from=guest-bootstrap /build/rootfs/ /
+COPY --from=native-tools /python-assets/ /python-assets/
 COPY scripts/build-guest.py /usr/local/bin/build-guest
 COPY guest/ /guest/
 
@@ -74,8 +117,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -m 0700 -o _apt -g root /var/lib/apt/lists/partial
 
-RUN uv python install "${PYTHON_VERSION}" --default \
-    && python3.14 /usr/local/bin/build-guest \
+RUN python3 /usr/local/bin/build-guest \
         configure \
         "${DEBIAN_RELEASE}" \
         "${DEBIAN_SNAPSHOT}" \
@@ -85,36 +127,12 @@ RUN uv python install "${PYTHON_VERSION}" --default \
 
 # Disk creation does not execute guest binaries, so it can run natively on the
 # build host while packaging the fixed AMD64 root filesystem.
-FROM --platform=$BUILDPLATFORM debian:${DEBIAN_RELEASE}-slim AS guest-builder
+FROM native-tools AS guest-builder
 
 ARG DEBIAN_RELEASE
 ARG DEBIAN_SNAPSHOT
 ARG GUEST_DISK_SIZE=8G
 ARG PYTHON_VERSION
-
-COPY config/apt/99broken-proxy /etc/apt/apt.conf.d/99broken-proxy
-
-RUN rm -f /etc/apt/sources.list.d/* \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s/ %s main\n' \
-        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" > /etc/apt/sources.list \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
-        "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
-    && apt-get -o Acquire::Check-Valid-Until=false update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        e2fsprogs \
-        qemu-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/root/.local/bin:${PATH}"
-RUN curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail \
-        https://astral.sh/uv/install.sh \
-        --output /tmp/install-uv.sh \
-    && env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh \
-    && rm /tmp/install-uv.sh \
-    && uv python install "${PYTHON_VERSION}" --default \
-    && python3.14 --version
 
 COPY --from=guest-rootfs / /build/rootfs/
 COPY scripts/build-guest.py /usr/local/bin/build-guest
@@ -135,10 +153,13 @@ ARG IMAGE_VERSION=dev
 
 COPY config/apt/99broken-proxy /etc/apt/apt.conf.d/99broken-proxy
 
-RUN rm -f /etc/apt/sources.list.d/* \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s/ %s main\n' \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/sources.list.d/* \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s/ %s main\n' \
         "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" > /etc/apt/sources.list \
-    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/%s/ %s-security main\n' \
         "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
