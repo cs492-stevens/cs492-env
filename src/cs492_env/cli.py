@@ -500,6 +500,8 @@ def run_vm(settings: Settings, release: Release, image: str) -> int:
             f"HOST_UID={uid}",
             "--env",
             f"HOST_GID={gid}",
+            "--env",
+            "TERM=xterm-256color",
             "--security-opt",
             "no-new-privileges",
         )

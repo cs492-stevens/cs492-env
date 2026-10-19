@@ -57,7 +57,7 @@ Platform Handling
 - SELinux Linux: apply the :Z workspace label when enforcing.
 - Windows/macOS: rely on Docker Desktop and TCG acceleration.
 - Verify Docker is running and configured for Linux containers.
-- Run Docker with inherited standard input/output for the interactive serial console.
+- Run Docker with inherited standard input/output for an internal SSH client connected to the guest.
 Installation
 From a tagged Git release:
 python3 -m pip install "cs492-env @ git+https://github.com/cs492-stevens/cs492-env.git@v0.1.0"

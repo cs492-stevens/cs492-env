@@ -340,6 +340,7 @@ class DockerCommandTests(unittest.TestCase):
         self.assertIn("VM_MODE=persistent", arguments)
         self.assertIn("VM_CPUS=4", arguments)
         self.assertIn("VM_MEMORY=4096", arguments)
+        self.assertIn("TERM=xterm-256color", arguments)
         self.assertEqual(run.call_args.kwargs["cwd"], self.workspace)
 
     def test_clean_run_has_no_state_volume(self) -> None:

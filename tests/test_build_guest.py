@@ -92,6 +92,32 @@ class BuildGuestTests(unittest.TestCase):
             self.assertFalse(assets.exists())
             self.assertTrue(lchown.called)
 
+    def test_interactive_login_requires_ephemeral_ssh_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "etc/sudoers.d").mkdir(parents=True)
+            (root / "home/dev").mkdir(parents=True)
+            (root / "home/dev/.bashrc").touch()
+            config = SimpleNamespace(rootfs=root)
+
+            with mock.patch.object(build_guest, "install_file"):
+                build_guest.configure_interactive_login(config)
+
+            sshd_config = (
+                root / "etc/ssh/sshd_config.d/99-cs492-env.conf"
+            ).read_text()
+            ssh_service = (
+                root / "etc/systemd/system/ssh.service.d/cs492-env.conf"
+            ).read_text()
+            self.assertIn("AuthenticationMethods publickey", sshd_config)
+            self.assertIn("PasswordAuthentication no", sshd_config)
+            self.assertIn("PermitRootLogin no", sshd_config)
+            self.assertIn("Wants=configure-dev.service", ssh_service)
+            self.assertIn("ExecStartPre=/usr/bin/ssh-keygen -A", ssh_service)
+            self.assertFalse(
+                (root / "etc/systemd/system/serial-getty@hvc0.service.d").exists()
+            )
+
     def test_dockerfile_configures_rootfs_as_scratch_stage_root(self) -> None:
         dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text()
 
@@ -119,6 +145,20 @@ class BuildGuestTests(unittest.TestCase):
         self.assertIn(
             '"cpython-${PYTHON_VERSION}-linux-x86_64-gnu"', native_tools
         )
+
+    def test_interactive_terminal_uses_internal_ssh(self) -> None:
+        root = Path(__file__).parents[1]
+        dockerfile = (root / "Dockerfile").read_text()
+        entrypoint = (root / "scripts/entrypoint.sh").read_text()
+        guest_configuration = (root / "guest/configure-dev.sh").read_text()
+
+        self.assertIn("openssh-server", build_guest.GUEST_PACKAGES)
+        self.assertIn("openssh-client", dockerfile)
+        self.assertIn("hostfwd=tcp:127.0.0.1:${ssh_port}-:22", entrypoint)
+        self.assertIn('run_ssh -tt "${ssh_options[@]}"', entrypoint)
+        self.assertIn("file,id=console0", entrypoint)
+        self.assertNotIn("chardev stdio", entrypoint)
+        self.assertIn("cs492.ssh_key=", guest_configuration)
 
 
 if __name__ == "__main__":

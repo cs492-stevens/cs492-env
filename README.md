@@ -45,8 +45,9 @@ cd path/to/assignment
 cs492-env
 ```
 
-The VM boots to an automatically logged-in `dev` shell. The launch directory is
-mounted at `/workspace`. Shut down cleanly from inside the guest with:
+The launcher automatically connects to the VM as `dev` over an internal SSH
+connection. No host port is exposed. The launch directory is mounted at
+`/workspace`. Shut down cleanly from inside the guest with:
 
 ```sh
 sudo poweroff
@@ -228,13 +229,16 @@ The multi-stage `Dockerfile` separates guest construction into four stages:
 4. A build-host-native stage copies the configured rootfs, writes it into an
    ext4 image, and converts the image to compressed QCOW2.
 
-The final host-native runtime installs `qemu-system-x86_64` and copies in those
-AMD64 guest artifacts. No construction phase requires a successful nested mount
-or enters a nested chroot. This is important on Apple Silicon: Docker supplies
-`/proc` at the scratch-stage root, allowing its architecture emulator to execute
-Debian's AMD64 package scripts without `CAP_SYS_ADMIN`. uv itself runs only as a
-native build-host binary. `mmdebstrap` does not boot a VM or run the Debian
-installer.
+The final host-native runtime installs `qemu-system-x86_64` and an SSH client,
+then copies in those AMD64 guest artifacts. QEMU exposes guest SSH only to the
+container loopback interface, and the entrypoint connects with a fresh
+per-container key. This gives interactive tools a normal PTY while the virtio
+console records boot diagnostics separately. No construction phase requires a
+successful nested mount or enters a nested chroot. This is important on Apple
+Silicon: Docker supplies `/proc` at the scratch-stage root, allowing its
+architecture emulator to execute Debian's AMD64 package scripts without
+`CAP_SYS_ADMIN`. uv itself runs only as a native build-host binary.
+`mmdebstrap` does not boot a VM or run the Debian installer.
 
 The VM kernel is booted directly by QEMU, so the disk needs neither a partition
 table nor a bootloader. Debian systemd runs as PID 1 inside the guest.

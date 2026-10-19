@@ -163,6 +163,7 @@ RUN apt-get update \
         "${DEBIAN_SNAPSHOT}" "${DEBIAN_RELEASE}" >> /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-client \
         qemu-system-x86 \
         qemu-utils \
         util-linux \
@@ -180,6 +181,7 @@ LABEL org.opencontainers.image.title="CS492 kernel module development environmen
       org.opencontainers.image.version="${IMAGE_VERSION}"
 
 ENV IMAGE_VERSION="${IMAGE_VERSION}" \
+    LANG=C.UTF-8 \
     VM_CPUS=2 \
     VM_MEMORY=2048
 

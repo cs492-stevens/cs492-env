@@ -43,6 +43,7 @@ GUEST_PACKAGES = (
     "less",
     "libfuse3-dev",
     "nano",
+    "openssh-server",
     "pkg-config",
     "python3",
     "strace",
@@ -189,6 +190,9 @@ def create_dev_account(config: BuildConfig) -> None:
         "/bin/bash",
         "dev",
     )
+    # SSH accepts public keys only, but the account itself must not remain
+    # locked or sshd will reject it before checking authorized_keys.
+    run_guest(config, "passwd", "--delete", "dev")
     run_guest(
         config,
         "apt-mark",
@@ -251,24 +255,44 @@ def install_guest_python(config: BuildConfig) -> None:
 
 
 def configure_interactive_login(config: BuildConfig) -> None:
-    """Configure sudo, serial autologin, workspace ownership, and the shell."""
+    """Configure sudo, SSH login, workspace ownership, and the shell."""
     rootfs = config.rootfs
     write_lines(rootfs / "etc/sudoers.d/dev", "dev ALL=(ALL) NOPASSWD:ALL")
     (rootfs / "etc/sudoers.d/dev").chmod(0o440)
 
-    # The serial console is the Docker user's terminal, so autologin avoids an
-    # artificial password prompt while sudo remains available inside the VM.
-    getty_override = rootfs / "etc/systemd/system/serial-getty@ttyS0.service.d"
-    getty_override.mkdir(parents=True, exist_ok=True)
+    sshd_config = rootfs / "etc/ssh/sshd_config.d"
+    sshd_config.mkdir(parents=True, exist_ok=True)
     write_lines(
-        getty_override / "autologin.conf",
+        sshd_config / "99-cs492-env.conf",
+        "AuthenticationMethods publickey",
+        "PasswordAuthentication no",
+        "KbdInteractiveAuthentication no",
+        "PermitEmptyPasswords no",
+        "PermitRootLogin no",
+        "AllowUsers dev",
+        "DisableForwarding yes",
+    )
+    for host_key in (rootfs / "etc/ssh").glob("ssh_host_*"):
+        host_key.unlink()
+
+    ssh_override = rootfs / "etc/systemd/system/ssh.service.d"
+    ssh_override.mkdir(parents=True, exist_ok=True)
+    write_lines(
+        ssh_override / "cs492-env.conf",
         "[Unit]",
         "Wants=configure-dev.service",
         "After=configure-dev.service",
         "",
         "[Service]",
-        "ExecStart=",
-        "ExecStart=-/sbin/agetty --autologin dev --noclear %I $TERM",
+        "ExecStartPre=",
+        "ExecStartPre=/usr/bin/ssh-keygen -A",
+        "ExecStartPre=/usr/sbin/sshd -t",
+    )
+
+    write_lines(
+        rootfs / "etc/tmux.conf",
+        'set -g default-terminal "tmux-256color"',
+        'set -as terminal-features ",xterm-256color:RGB"',
     )
 
     install_file(
@@ -279,7 +303,7 @@ def configure_interactive_login(config: BuildConfig) -> None:
     write_lines(
         rootfs / "etc/systemd/system/configure-dev.service",
         "[Unit]",
-        "Description=Match the dev account to the shared workspace owner",
+        "Description=Configure the interactive development account",
         "After=local-fs.target",
         "",
         "[Service]",
@@ -293,12 +317,9 @@ def configure_interactive_login(config: BuildConfig) -> None:
         "CS492 kernel module development environment",
         "",
         "Shared files are mounted at /workspace.",
-        "Use sudo insmod, sudo rmmod, and sudo dmesg for module work.",
-        "Run sudo poweroff to exit cleanly.",
     )
     with (rootfs / "home/dev/.bashrc").open("a", encoding="utf-8") as bashrc:
         bashrc.write('\nexport PATH="$HOME/.local/bin:$PATH"\n')
-        bashrc.write(f"export PS1='[\\u@{ENVIRONMENT_NAME} \\W]\\$ '\n")
 
 
 def prepare_boot_files(config: BuildConfig) -> None:
@@ -309,6 +330,7 @@ def prepare_boot_files(config: BuildConfig) -> None:
         "enable",
         "systemd-networkd.service",
         "systemd-resolved.service",
+        "ssh.service",
     )
     run_guest(config, "update-initramfs", "-u", "-k", "all")
 
